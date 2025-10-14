@@ -234,30 +234,3 @@ class InData:
             self.config.output_file = args.output.with_suffix(".wav") if args.output is not None \
                 else args.input.with_suffix(".wav")
 
-
-# -------------------------------
-# Example usage
-# -------------------------------
-def main() -> None:
-    bins: Dict[str, str] = {
-                'gst': r'C:\Program Files\Dolby\Dolby Reference Player\gst-launch-1.0.exe',
-                'sox': r'.\bin\sox\sox.exe',
-                'ffmpeg': r'.\bin\ffmpeg.exe',
-                'mediainfo': r'.\bin\MediaInfo.exe',
-                'eac3to': r'.\bin\eac3to\eac3to.exe',
-            }
-    config = InData(bins)
-    print(f"Volume: {InData().volume}")
-    print(f"Delay : {InData().delay}")
-    print(f"Channels config: {InData().channels}")
-    print(f"Keep raw: {InData().keep_raw}")
-
-    for name, path in bins.items():
-        print('Path to {}-launch file: {}'.format(name, getattr(InData(), f"{name}_launch")))
-
-    print(f"Input: {InData().input_file}")
-    print(f"Output: {InData().output_file}")
-
-
-if __name__ == '__main__':
-    main()
