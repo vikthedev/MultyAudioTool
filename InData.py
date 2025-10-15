@@ -26,7 +26,7 @@ class InData:
     # Constants
     # ---------------------------
     CHANNELS: Dict[str, Dict]
-    BINS_REQ: Dict[str, str] = {'gst': '', 'sox': '', 'ffmpeg': '', 'mediainfo': '', 'eac3to': ''}
+    BINS_REQ: Dict[str, str]
     # ---------------------------
     # Private attributes
     # ---------------------------
@@ -60,7 +60,7 @@ class InData:
             # ---------------------------
             # Private CHANNELS
             # ---------------------------
-            self.CHANNELS: Dict[str, Dict] = {
+            self.CHANNELS = {
                 '2.0': {'id': 0, 'names': ['L', 'R']},
                 '3.1': {'id': 3, 'names': ['L', 'R', 'C', 'LFE']},
                 '5.1': {'id': 7, 'names': ['L', 'R', 'C', 'LFE', 'Ls', 'Rs']},
@@ -180,7 +180,7 @@ class InData:
 
             # Audio options
             self.parser.add_argument('-c', '--channels',
-                                     type=str, default='9.1.6', choices=InData().CHANNELS.keys(),
+                                     type=str, default='9.1.6', choices=self.config.CHANNELS.keys(),
                                      help='Output channel configuration')
             self.parser.add_argument('-cf', '--channels_filter',
                                      type=conv.parse_channels_filter, default=[],

@@ -117,6 +117,18 @@ class Utils:
             return value
 
         @staticmethod
+        def to_seconds(human_time: Optional[str] = None) -> float:
+            """Very simple method to convert HH:MM:SS.ms to seconds"""
+            if human_time is None:
+                return 0
+            try:
+                human_time, ms = map(int, human_time.split("."))
+            except ValueError:
+                ms = 0
+            h, m, s = map(int, human_time.split(":"))
+            return float(h * 3600 + m * 60 + s + ms)
+
+        @staticmethod
         def to_human_time(seconds: Optional[to_float] = None, with_ms: bool = False) -> str:
             """Format seconds as HH:MM:SS.ms"""
             if seconds is None:
@@ -391,14 +403,17 @@ class Utils:
             return locked
 
         @staticmethod
-        def absolute_self(source: str) -> Path:
+        def absolute_self(source: Union[str, Path]) -> Path:
             """
             Return an absolute version of this path by prepending the current
             script directory. No normalization or symlink resolution is performed.
             """
-            source_path = Path(source.strip())
-            if not source_path.is_absolute() and (source.startswith('.\\') or str(source_path.parent) != '.'):
-                source_path = Path(sys.argv[0]).parent / source_path
+            if isinstance(source, str):
+                source_path = Path(source.strip())
+                if not source_path.is_absolute() and (source.startswith('.\\') or str(source_path.parent) != '.'):
+                    source_path = Path(sys.argv[0]).parent / source_path
+            else:
+                source_path = source
             return source_path
 
     # ----------------- uncategorized methods -----------------

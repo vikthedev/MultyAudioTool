@@ -8,69 +8,81 @@ from typing import Optional, Dict, Union
 from Utils import Utils
 
 
+# -----------------------------
+# Audio format constants
+# -----------------------------
+class AudioFormat:
+    AC3 = "AC3"  # AC-3 / E-AC-3 share same sync word
+    EAC3 = "EAC3"  # kept for external reference
+    TRUEHD = "THD"
+    DTS = "DTS"
+    AAC = "AAC"
+    WAV = "WAV"
+    W64 = "W64"
+
+
 class AudioInfo:
 
-    FORMAT_AC3: str = "AC3"
-    FORMAT_THD: str = "THD"
+    FORMAT_AC3: str = AudioFormat.AC3
+    FORMAT_THD: str = AudioFormat.TRUEHD
 
-    def __init__(self, mediainfo_launch: Path, eac3to_launch: Path):
+    def __init__(self, mediainfo_launch: Union[str, Path], eac3to_launch: Union[str, Path]):
         """
         Initialize AudioInfo
         """
         self.DEFAULT_DIALNORM: int = -31
 
-        self.mediainfo_launch: Path = mediainfo_launch
-        self.eac3to_launch: Path = eac3to_launch
-        self.checker_launch: Optional[Path] = None
+        self.mediainfo_launch: Path = Utils.IO.absolute_self(mediainfo_launch)
+        self.eac3to_launch: Path = Utils.IO.absolute_self(eac3to_launch)
+        self.parser_launch: Optional[Path] = None
 
         self.audio_info: Optional[Dict[str, Union[str, int, None]]] = None
 
-    def parse(self, input_file: Path) -> "AudioInfo":
+    def parse(self, input_file: Union[str, Path]) -> "AudioInfo":
         """
         Parse audio file and populate audio_info dictionary.
         Detects audio format using magic numbers first, then extracts detailed info
-        (channels, frequency, dialnorm) using the selected checker (eac3to or mediainfo).
+        (channels, frequency, dialnorm) using the selected parser (eac3to or mediainfo).
         """
+
+        input_file: Path = Path(input_file).absolute()
 
         if not input_file.is_file():
             raise sys.exit(f'FileNotFoundError: Input file {input_file} not found')
 
         # Detect audio format early using magic numbers from file header
 
-        with input_file.open('rb') as f:
-            first_bytes = f.read(10)
-            if first_bytes.startswith(0x0B77.to_bytes(2, 'big')):
-                audio_format = self.FORMAT_AC3
-                checker_priority = ["mediainfo", "eac3to"]
-            elif 0xF8726FBA.to_bytes(4, 'big') in first_bytes:
-                audio_format = self.FORMAT_THD
-                checker_priority = ["eac3to"]
-            else:
-                raise sys.exit(
-                    Utils.Console.cprint(f'RuntimeError: Source file must be in E-AC3 or TrueHD format', 'red'))
+        audio_format = self._detect_magic_bytes(input_file)
 
-        checker_name = None
-        # Choose the best available checker
-        for name in checker_priority:
-            checker_launch = getattr(self, f"{name}_launch", None)
+        if audio_format not in [self.FORMAT_AC3, self.FORMAT_THD]:
+            raise sys.exit(
+                Utils.Console.cprint(f'RuntimeError: Source file must be in E-AC3 or TrueHD format', 'red'))
+
+        parser_priority = ["eac3to"] if audio_format == self.FORMAT_THD else ["mediainfo", "eac3to"]
+
+        parser_name = None
+        # Choose the best available parser
+        for name in parser_priority:
+            parser_launch = getattr(self, f"{name}_launch", None)
             func = getattr(self, f"_by_{name}", None)
-            if checker_launch and func and Utils.IO.is_executable_exists(checker_launch):
-                self.checker_launch = checker_launch
-                checker_name = name
+            if parser_launch and func and Utils.IO.is_executable_exists(parser_launch):
+                self.parser_launch = parser_launch
+                parser_name = name
                 break
 
-        if checker_name is not None and audio_format:
-            # Parse detailed info only if checker is available and format is recognized
+        if parser_name is not None and audio_format:
+            # Parse detailed info only if parser is available and format is recognized
             self.audio_info = {
                 "format": audio_format,
                 "duration": None,
                 "channels": None,
+                "bitrate": None,
                 "freq": None,
                 "dialnorm": None,
-                "checker": checker_name
+                "parser_used": parser_name
             }
 
-            getattr(self, f"_by_{checker_name}")(input_file=input_file)
+            getattr(self, f"_by_{parser_name}")(input_file=input_file)
             # Normalize audio format
             self.audio_info["format"] = self._normalize_audio_format(self.audio_info.get("format"))
 
@@ -102,11 +114,19 @@ class AudioInfo:
         return self.audio_info.get("format", None)
 
     @property
-    def checker(self) -> Optional[str]:
+    def duration(self) -> Optional[float]:
+        return self.audio_info.get("duration", None)
+
+    @property
+    def channels(self) -> Optional[str]:
+        return self.audio_info.get("channels", None)
+
+    @property
+    def parser_used(self) -> Optional[str]:
         """
-        Return actual checker value or None.
+        Return actual parser value or None.
         """
-        return self.audio_info.get("checker", None)
+        return self.audio_info.get("parser_used", None)
 
     # -------------------------
     # Private methods for each tool
@@ -118,7 +138,7 @@ class AudioInfo:
         """
         try:
             result = subprocess.run(
-                [self.checker_launch.absolute(), str(input_file), '--Output=JSON'],
+                [self.parser_launch.absolute(), str(input_file), '--Output=JSON'],
                 capture_output=True,
                 text=True,
                 check=True
@@ -131,10 +151,11 @@ class AudioInfo:
                         cn = "5.1" if cn == "6" else "7.1" if cn == "8" else cn
                         self.audio_info.update({
                             "format": track.get("Format", self.audio_info["format"]).strip(),
-                            "duration": track.get("Duration", None).strip(),
+                            "duration": Utils.Format.to_float(track.get("Duration", 0).strip()),
+                            "bitrate": int(Utils.Format.to_int(track.get("BitRate", 0)) / 1000),
                             "channels":  cn,
                             "freq": Utils.Format.to_frequency(track.get("SamplingRate")),
-                            "dialnorm": Utils.Format.to_int(track.get("extra", {}).get("dialnorm"))
+                            "dialnorm": Utils.Format.to_int(track.get("extra", {}).get("dialnorm")),
                         })
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyboardInterrupt):
             pass
@@ -146,18 +167,24 @@ class AudioInfo:
         """
         try:
             result = subprocess.run(
-                [self.checker_launch.absolute(), str(input_file)],
+                [self.parser_launch.absolute(), str(input_file)],
                 capture_output=True,
                 text=True,
                 check=True
             )
             output = result.stdout
 
+            # TODO: parse DTS with core
+            # DTS Master Audio, 5.0 channels, 24 bits, 48kHz
+            # (core: DTS, 5.0 channels, 1509kbps, 48kHz)
             pattern = (
-                r'(?P<format>[^\n,]+?),\s*'               # audio format
-                r'(?P<channels>[\d\.]+)\s*channels\b'     # channels
+                r'^'
+                r'(?P<format>[^,]+?),\s*'  # audio format
+                r'(?P<channels>[\d\.]+)\s*channels\b'  # channels
+                r'(?:.*?(?P<duration>\d+:\d+:\d+))?'  # duration HH:MM:SS
+                r'(?:.*?(?P<bitrate>\d+)kbps\b)?'  # bitrate
                 r'(?:.*?(?P<freq>\d+\s*(?:k?hz|hz))\b)?'  # optional frequency
-                r'.*?dialnorm:\s*(?P<dialnorm>-?\d+)dB'   # dialnorm
+                r'(?:.*?dialnorm:\s*(?P<dialnorm>-?\d+)dB\b)?'  # dialnorm
             )
 
             match = re.search(pattern, output, flags=re.I | re.S)
@@ -169,6 +196,7 @@ class AudioInfo:
                         Utils.Format.to_str(v, True)
                         if k in ["format", "channels"]
                         else Utils.Format.to_frequency(v) if k == "freq"
+                        else Utils.Format.to_seconds(v) if k == "duration"
                         else Utils.Format.to_int(v)
                     ) if v is not None else None
                     for k, v in match.groupdict().items()
@@ -176,15 +204,45 @@ class AudioInfo:
         except (subprocess.CalledProcessError, ValueError, KeyboardInterrupt):
             pass
 
+    def _detect_magic_bytes(self, input_file: Path) -> Optional[str]:
+        try:
+            with input_file.open("rb") as fh:
+                header = fh.read(32)
+        except (FileNotFoundError, OSError) as exc:
+            return None
+
+        detected: Optional[str] = None
+
+        if header.startswith(b"\x0B\x77"):
+            detected = AudioFormat.AC3
+        elif header.startswith(b"\xF8\x72\x6F\xBA"):
+            detected = AudioFormat.TRUEHD
+        elif header.startswith(b"\x7F\xFE\x80\x01"):
+            detected = AudioFormat.DTS
+        elif header.startswith(b"\xFF\xF1") or header.startswith(b"\xFF\xF9"):
+            detected = AudioFormat.AAC
+        elif len(header) >= 12 and header[0:4] == b"RIFF" and header[8:12] == b"WAVE":
+            detected = AudioFormat.WAV
+        else:
+            # W64 GUID per spec (16 bytes)
+            W64_GUID = b"\x01\xB7\x44\x0E\xB6\x7D\x11\xD1\xA1\xC0\x00\xC0\x4F\xC3\x5D\xE0"
+            if header.startswith(W64_GUID):
+                detected = AudioFormat.W64
+
+        return detected
+
     def _normalize_audio_format(self, audio_format: Optional[str]) -> Optional[str]:
         """
         Normalize raw format names to internal constants.
         """
         return {
-            "E-AC-3": self.FORMAT_AC3,
-            "E-AC3": self.FORMAT_AC3,
-            self.FORMAT_AC3: self.FORMAT_AC3,
-            "TrueHD (Atmos)": self.FORMAT_THD,
-            "MLP FBA": self.FORMAT_THD,
-            self.FORMAT_THD: self.FORMAT_THD
+            # MediaInfo
+            "E-AC-3": AudioFormat.AC3,
+            "MLP FBA": AudioFormat.TRUEHD,
+            # eac3to
+            "E-AC3": AudioFormat.AC3,
+            "TrueHD (Atmos)": AudioFormat.TRUEHD,
+            # self
+            self.FORMAT_AC3: AudioFormat.AC3,
+            self.FORMAT_THD: AudioFormat.TRUEHD,
         }.get(audio_format, None)

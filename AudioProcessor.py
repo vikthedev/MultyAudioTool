@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Optional, List, Dict, Union, Any
 
-from AudioInfo import AudioInfo
+from AudioInfo import AudioInfo, AudioFormat
 from Utils import Utils
 
 
@@ -34,8 +34,8 @@ class AudioProcessor:
             mediainfo_launch: Path to FFmpeg executable
             channels: Dict with 'id' and 'names'
         """
-        self.THD = 'TDH'
-        self.AC3 = 'AC3'
+        self.THD = AudioFormat.TRUEHD
+        self.AC3 = AudioFormat.AC3
 
         self.GST_DELAY_THD = 32  # GStreamer adds 32 samples at start at True HD decoding
         self.GST_DELAY_AC3 = -224  # GStreamer removes 224 samples at start at E-AC3 decoding
@@ -100,7 +100,7 @@ class AudioProcessor:
                 "channels": None,
                 "freq": None,
                 "dialnorm": None,
-                "checker": None
+                "parser_used": None
             }
             self._output_files: Optional[List[Path]] = None
 
@@ -117,7 +117,7 @@ class AudioProcessor:
         def input_format(self) -> Optional[str]:
             fmt = self.get_audio_info("format")
             fmt = fmt.upper() if isinstance(fmt, str) else None
-            return self.parent.THD if fmt == "THD" else self.parent.AC3 if fmt == "AC3" else None
+            return self.parent.THD if fmt == AudioFormat.TRUEHD else self.parent.AC3 if fmt == AudioFormat.AC3 else None
 
         @property
         def duration(self) -> Optional[Union[int, float]]:
@@ -438,7 +438,7 @@ class AudioProcessor:
             def _normalize_audio_field(k: str, v: Union[str, int, float, None]) -> Union[str, int, float, None]:
                 """Normalize a single audio info field."""
                 return (
-                    Utils.Format.to_str(v, True) if k in {"format", "channels", "checker"}
+                    Utils.Format.to_str(v, True) if k in {"format", "channels", "parser_used"}
                     else Utils.Format.to_float(v) if k == "duration"
                     else Utils.Format.to_frequency(v) if k == "freq"
                     else Utils.Format.to_int(v) if v is not None else None
@@ -458,7 +458,7 @@ class AudioProcessor:
 
             if self.volume is None:
                 if ai.get("dialnorm") is None:
-                    if ai.get("format") == self.parent.THD and ai.get("checker") is None:
+                    if ai.get("format") == self.parent.THD and ai.get("parser_used") is None:
                         Utils.Console.cprint("Warning. The 'dialnorm' level for TrueHD audio can only be determined "
                                      "using 'eac3to'.\nThe sound volume will not be adjusted.", "blue")
                     else:
@@ -470,11 +470,11 @@ class AudioProcessor:
             # Update the raw_info_file with normalized values
             self._put_raw_audio_info(self.audio_info)
 
-            Utils.Console.cprint("{format}{channels} info{checker}".format(
+            Utils.Console.cprint("{format}{channels} info{parser_used}".format(
                 format="TrueHD (Atmos)" if self.get_audio_info("format") and self.get_audio_info(
-                    "format") == "THD" else "E-AC3",
+                    "format") == AudioFormat.TRUEHD else "E-AC3",
                 channels=f" {self.get_audio_info('channels')}" if self.get_audio_info('channels') else "",
-                checker=f" got by {self.get_audio_info('checker').upper()}" if self.get_audio_info('checker') else ""
+                parser_used=f" got by {self.get_audio_info('parser_used').upper()}" if self.get_audio_info('parser_used') else ""
             ))
             Utils.Console.cprint('duration={duration}{dialnorm}{freq}'.format(
                 duration=Utils.Format.to_human_time(self.get_audio_info("duration")),
